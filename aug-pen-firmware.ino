@@ -37,7 +37,8 @@ const char *mqtt_server = "192.168.43.20";
 const char *mqtt_username = "user";
 const char *mqtt_password = "iL0v3MoonGaYoung";
 
-PubSubClient mqtt(WiFiClient());
+WiFiClient wifi;
+PubSubClient mqtt(wifi);
 
 float ACCEL[] = { 0, 0, 0 };
 float GYRO[] = { 0, 0, 0 };
@@ -45,7 +46,7 @@ float GYRO[] = { 0, 0, 0 };
 void initMPU6050();
 void initWiFi();
 void initMQTT();
-void reconnectMQTT();
+bool reconnectMQTT();
 void updateSamples();
 void debugSamples();
 void publishSamples();
@@ -67,11 +68,11 @@ void loop() {
 
   mqtt.connected()
       ? mqtt.loop()
-      : reconnect();
+      : reconnectMQTT();
 
   publishSamples();
 
-  delay(50);
+  delay(200);
 }
 
 void initMPU6050() {
@@ -99,17 +100,23 @@ void initMQTT() {
   reconnectMQTT();
 }
 
-void reconnectMQTT() {
+bool reconnectMQTT() {
   Serial.print("MQTT Reconnecting");
 
   while (!mqtt.connected()) {
-    if (!mqtt.connect("AUG_PEN_MK_I")) {
-      Serial.print("Trying again in 3 seconds...");
+    if (!mqtt.connect("AUG_PEN_MK_I", mqtt_username, mqtt_password)) {
+      Serial.println("MQTT connection unsuccessfull.");
+      Serial.println(mqtt.state());
+      Serial.println("Trying again in 3 seconds...");
       delay(3000);
+    } else {
+      Serial.println("MQTT connection successfull.");
     }
   }
 
   Serial.println("Connected to MQTT Server.");
+
+  return mqtt.connected();
 }
 
 void updateSamples() {
