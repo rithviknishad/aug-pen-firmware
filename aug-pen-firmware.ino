@@ -1,11 +1,33 @@
 #include <ESP8266WiFi.h>
 #include <Wire.h>
 #include <PubSubClient.h>
-#include <MPU6050_6Axis_MotionApps20.h>
 
 #define X     0
 #define Y     1
 #define Z     2
+
+/*
+  AFS_SEL   FULL SCALE RANGE    LSB SENSITIVITY
+  ---------------------------------------------
+    0             ±2g            16384 LSB/g
+    1             ±4g            8192  LSB/g
+    2             ±8g            4096  LSB/g
+    3             ±16g           2048  LSB/g
+*/
+#define AFS_SEL 0
+#define ACCEL_SENSITIVITY (16384.0 / pow(2, AFS_SEL);) // LSB/g
+
+/*
+  FS_SEL    FULL SCALE RANGE    LSB SENSITIVITY
+  ---------------------------------------------
+    0         ± 250 °/s           131  LSB/°/s
+    1         ± 500 °/s           65.5 LSB/°/s
+    2         ± 1000 °/s          32.8 LSB/°/s 
+    3         ± 2000 °/s          16.4 LSB/°/s
+*/
+#define FS_SEL 0
+#define GYRO_SENSITIVITY  (131.0 / pow(2, FS_SEL)) // LSB/°/s
+
 
 /* 
   SCHEMATIC
@@ -42,7 +64,6 @@ float ACCEL[3] = {0};  // Current raw acceleration samples from MPU-6050.
 float GYRO[3]  = {0};  // Current raw gyroscope samples from MPU-6050.
 
 float VELOCITY[3] = {0};
-float ANGULAR_VELOCITY[3] = {0};
 
 float POSITION[3]     = {0};  // Current position, double integrated from ACCEL.
 float ORIENTATION[3]  = {0};  // Current orientation, double integrated from GYRO.
@@ -129,12 +150,13 @@ float t0 = 0;
 
 void updateSamples() {
   Wire.beginTransmission(MPU);
-  Wire.write(0x3B); // ACCEL_XOUT_H Register
+  Wire.write(0x3B);
   Wire.endTransmission(false);
-  Wire.requestFrom(MPU, 14, true); // Request 14 bytes
+  Wire.requestFrom(MPU, 14, true);
 
+  // TODO: change divider scalar to new config.
   for (int i = 0; i < 3; ++i)
-    ACCEL[i] = (Wire.read() << 8) | Wire.read();
+    ACCEL[i] = (((Wire.read() << 8) | Wire.read()) / 16384.0) * 9.80665;
 
   int temp = (Wire.read() << 8) | Wire.read();
 
@@ -142,11 +164,15 @@ void updateSamples() {
     GYRO[i] = (Wire.read() << 8) | Wire.read();
 
   float delta = (millis() / 1000) - t0;
-  float delta_square = squaref(delta);
 
-  
+  for (int i = 0; i < 3; ++i) {
+    VELOCITY[i] += ACCEL[i] * delta;
+    
+    POSITION[i] += VELOCITY[i] * delta;
+    ORIENTATION[i] += GYRO[i] * delta;
+  }
 
-  t0 += delta;
+    t0 += delta;
 }
 
 void debugSamples() {
