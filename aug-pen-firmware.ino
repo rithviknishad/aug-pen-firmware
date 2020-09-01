@@ -1,10 +1,17 @@
-#include <ESP8266WiFi.h>
-#include <Wire.h>
-#include <PubSubClient.h>
+/*
+  Author: RITHVIK NISHAD
+  License: GNU General Public v2.0 (see LICENSE)
+*/
 
-#define X     0
-#define Y     1
-#define Z     2
+// #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
+#define USE_WIFI_MQTT // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
+
+#include <Wire.h>
+
+#ifdef USE_WIFI_MQTT
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#endif
 
 /*
   AFS_SEL   FULL SCALE RANGE    LSB SENSITIVITY
@@ -15,7 +22,7 @@
     3             ±16g           2048  LSB/g
 */
 #define AFS_SEL 0
-#define ACCEL_SENSITIVITY (16384.0 / pow(2, AFS_SEL);) // LSB/g
+#define ACCEL_SENSITIVITY (16384.0 / pow(2, AFS_SEL)) // LSB/g
 
 /*
   FS_SEL    FULL SCALE RANGE    LSB SENSITIVITY
@@ -28,26 +35,59 @@
 #define FS_SEL 0
 #define GYRO_SENSITIVITY  (131.0 / pow(2, FS_SEL)) // LSB/°/s
 
-
 /* 
   SCHEMATIC
 
-  ESP8266     MPU-6050    FLASH
- --------------------------------
-  GND         --------GND--------
-  GPIO2       SCL         _GPIO2
-  GPIO0       SDA         _GPIO1
-  RX          INT         _RX
-  TX          --------_TX--------
-  CH_EN       --------VCC--------
-  RST         --------RST--------
-  VCC         --------VCC--------
+  FLASH     ESP8266     MPU-6050    ATMEGA328P
+  --------------------------------------------
+  VCC       VCC         VCC         3v3
+  _RST      RST
+  _CH_EN    CH_EN       
+  _TX       TX
+  _RX       -RX(-)      (INT)       (2)
+  -GPIO0    GPIO0       SDA         A4
+  _GPIO2    GPIO2       SCL         A5
+  GND       GND         GND         GND
 */
 
-char buff[100]; // A globally shared 100 byte buffer space.
+#ifndef RELEASE
+#define SERIAL_ENABLED       // Comment to disable Serial (INFO and DEBUGGING inclusive)
+#define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds. Comment this to disable post boot delay.
+#endif
+
+#ifdef SERIAL_ENABLED
+#define INFO_ENABLED  // Comment to disable INFO and LOG.
+#define DEBUG_ENABLED     // Comment to disable DEBUG.
+#define SERIAL_PARAM(name, value) \
+  Serial.print(F(name));          \
+  Serial.print(value);
+#endif
+
+#ifdef INFO_ENABLED
+#define INFO_PARAM(name, value) SERIAL_PARAM(name, value)
+#define INFO(x) Serial.println(F(x)); // Use INFO("...") to Serial LOG a compile-time constant string.
+#else
+#define INFO_PARAM(name, val) ;
+#define INFO(x) ;
+#endif
+
+#ifdef DEBUG_ENABLED
+#define DEBUG(param)   \
+  Serial.print(param); \
+  Serial.print('\t');
+#define DEBUG_PARAM(name, value) SERIAL_PARAM(name, value)
+#define END_DEBUG Serial.println();
+#else
+#define DEBUG(param) ;
+#define DEBUG_PARAM(name, value) ;
+#define END_DEBUG ;
+#endif
+
+char buff[100];       // A globally shared 100 byte buffer space.
 
 const int MPU = 0x68; // I2C Address of MPU-6050 (default).
 
+#ifdef USE_WIFI_MQTT
 // WiFi Connection Configuration
 const char *wifi_ssid = "Honor 8C";     // SSID of the WiFi AP to be connected.
 const char *wifi_password = "16june01"; // Password of the WiFi AP.
@@ -59,112 +99,160 @@ const char *mqtt_password = "iL0v3MoonGaYoung"; // MQTT Credentials - Password.
 
 WiFiClient wifi;  // WiFi Client for MQTT Client.
 PubSubClient mqtt(wifi);  // MQTT PubSub Client.
+#endif
+
+#define X     0
+#define Y     1
+#define Z     2
+#define ROLL  X
+#define YAW   Y
+#define PITCH Z
 
 float ACCEL[3] = {0};  // Current raw acceleration samples from MPU-6050.
 float GYRO[3]  = {0};  // Current raw gyroscope samples from MPU-6050.
 
-float VELOCITY[3] = {0};
+float VELOCITY[3] = {0}; // Current velocity, integrated from ACCEL.
 
-float POSITION[3]     = {0};  // Current position, double integrated from ACCEL.
-float ORIENTATION[3]  = {0};  // Current orientation, double integrated from GYRO.
+float POSITION[3]     = {0};  // Current position, integrated from VELOCITY.
+float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
 
-void initMPU6050();
-void initWiFi();
-void initMQTT();
-bool reconnectMQTT();
+#define DEBUG_VECTOR(nameX, nameY, nameZ, vect) \
+  DEBUG_PARAM(nameX, vect[X]);                  \
+  DEBUG_PARAM(nameY, vect[Y]);                  \
+  DEBUG_PARAM(nameZ, vect[Z]);
+
+#define DEBUG_SAMPLES                             \
+  DEBUG_VECTOR("AX=", "AY=", "AZ=", ACCEL);       \
+  DEBUG_VECTOR("VX=", "VY=", "VZ=", VELOCITY);    \
+  DEBUG_VECTOR("PX=", "PY=", "PZ=", POSITION);    \
+  DEBUG_VECTOR("GX=", "GY=", "GZ=", GYRO);        \
+  DEBUG_VECTOR("OX=", "OY=", "OZ=", ORIENTATION); \
+  END_DEBUG;
+
+void initMPU6050(); // Initialises MPU-6050.
+
+#ifdef USE_WIFI_MQTT
+void initWiFi();                            // Initialises WiFi connectivity.
+void initMQTT();                            // Initialises MQTT Client.
+bool reconnectMQTT(bool firstTime = false); // Reconnects MQTT Client w/ broker.
+void publishSamples();                      // Publish the samples to respective MQTT topics.
+#endif
+
 inline unsigned long square(long x) { return x * x; }
 inline float squaref(float x) { return x * x; }
-void updateSamples();
-void debugSamples();
-void publishSamples();
+
+void updateSamples(); // Get and update the samples
 
 void setup() {
+#ifdef SERIAL_ENABLED
   Serial.begin(115200);
+#endif
 
   initMPU6050();
+  
+#ifdef USE_WIFI_MQTT
   initWiFi();
   initMQTT();
+#endif
 
-  Serial.println(F("AUG PEN MK I : boot success."));
-  delay(2000);
+#ifdef USE_WIFI_MQTT
+  INFO("AUG PEN MK I : boot_result=0x0, success.");
+#else
+  INFO("AUG PEN MK I : boot_result=0x1, success.");
+  INFO("WiFI and MQTT is disabled. Reason: 'USE_WIFI_MQTT' is not defined.");
+#endif
+
+#ifdef POST_BOOT_DELAY
+  delay(POST_BOOT_DELAY);
+#endif
 }
 
 void loop() {
   updateSamples();
-  debugSamples();
+  DEBUG_SAMPLES;
 
+#ifdef USE_WIFI_MQTT
   mqtt.connected()
       ? mqtt.loop()
       : reconnectMQTT();
 
   publishSamples();
+#endif
 
-  delay(200);
+  delay(100);
 }
 
 void initMPU6050() {
+  INFO("Connecting to MPU-6050...");
   Wire.begin(0, 2);
   Wire.beginTransmission(MPU);
   Wire.write(0x6B); // PWR_MGMT_1 Register
   Wire.write(0);    // Wake the MPU-6050.
   Wire.endTransmission(true);
+  INFO("MPU-6050 Connected. Status: Unknown");
 }
 
+#ifdef USE_WIFI_MQTT
 void initWiFi() {
+  INFO("Connecting to WiFi AP...");
   WiFi.begin(wifi_ssid, wifi_password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+#ifdef INFO_ENABLED
     Serial.print('.');
+#endif
   }
-
-  Serial.print(F("Connected. What's my IP? "));
-  Serial.println(WiFi.localIP());
+  INFO_PARAM("WiFi Connected. What's my IP? ", WiFi.localIP());
 }
 
 void initMQTT() {
+  INFO("Connecting to MQTT Broker Server...");
   mqtt.setServer(mqtt_server, 1883);
-  reconnectMQTT();
+  reconnectMQTT(true);
 }
 
-bool reconnectMQTT() {
-  Serial.print(F("MQTT Reconnecting"));
+bool reconnectMQTT(bool firstTime) {
+  if (!firstTime)
+    INFO("MQTT Reconnecting...");
 
   while (!mqtt.connected()) {
     if (!mqtt.connect("AUG_PEN_MK_I", mqtt_username, mqtt_password)) {
-      Serial.println(F("MQTT connection unsuccessfull."));
-      Serial.println(mqtt.state());
-      Serial.println(F("Trying again in 3 seconds..."));
+      INFO_PARAM("MQTT connection unsuccessfull. Status: ", mqtt.state());
+      INFO("Trying again in 3 seconds...");
       delay(3000);
-    } else {
-      Serial.println(F("MQTT connection successfull."));
     }
   }
-
-  Serial.println(F("Connected to MQTT Server."));
-
+  INFO_PARAM("MQTT Connected. Status: ", mqtt.state());
   return mqtt.connected();
 }
+#endif
 
+// stores the last sampling time, for measuring delta time between last two samples.
 float t0 = 0;
 
 void updateSamples() {
+  // request 14 bytes of data from register 0x3B (ACCEL_XOUT_H).
   Wire.beginTransmission(MPU);
   Wire.write(0x3B);
   Wire.endTransmission(false);
   Wire.requestFrom(MPU, 14, true);
-
-  // TODO: change divider scalar to new config.
+  
+  // Read all ACCEL registers (2 * 3 bytes) and store in m/s^2.
   for (int i = 0; i < 3; ++i)
-    ACCEL[i] = (((Wire.read() << 8) | Wire.read()) / 16384.0) * 9.80665;
+    ACCEL[i] = (((Wire.read() << 8) | Wire.read()) / ACCEL_SENSITIVITY) * 9.80655;
 
-  int temp = (Wire.read() << 8) | Wire.read();
+  // Read temperature register (2 bytes) and store as degree celsius.
+  float temp = (((int)(Wire.read() << 8) | Wire.read()) / 340.0) + 36.53;
 
+  // Read all GRYO regsters (2 * 3 bytes) and store in deg/s.
   for (int i = 0; i < 3; ++i)
-    GYRO[i] = (Wire.read() << 8) | Wire.read();
+    GYRO[i] = ((Wire.read() << 8) | Wire.read()) / GYRO_SENSITIVITY;
 
+  // get sampling time delta in seconds.
   float delta = (millis() / 1000) - t0;
 
+  // compute velocity, position and orientation.
   for (int i = 0; i < 3; ++i) {
     VELOCITY[i] += ACCEL[i] * delta;
     
@@ -172,19 +260,8 @@ void updateSamples() {
     ORIENTATION[i] += GYRO[i] * delta;
   }
 
-    t0 += delta;
-}
-
-void debugSamples() {
-  Serial.print(F("\tpX="));  Serial.print(POSITION[X]);
-  Serial.print(F("\tpY="));  Serial.print(POSITION[Y]);
-  Serial.print(F("\tpZ="));   Serial.print(POSITION[Z]);
-
-  Serial.print(F("\toX="));  Serial.print(ORIENTATION[X]);
-  Serial.print(F("\toY="));  Serial.print(ORIENTATION[Y]);
-  Serial.print(F("\toZ="));  Serial.print(ORIENTATION[Z]);
-
-  Serial.println();
+  // update t0 for getting time delta in next sampling.
+  t0 += delta;
 }
 
 char* floatToString(const float value) {
@@ -192,6 +269,7 @@ char* floatToString(const float value) {
   return buff;
 }
 
+#ifdef USE_WIFI_MQTT
 void publishSamples() {
   mqtt.publish("position/X", floatToString(POSITION[X]));
   mqtt.publish("position/Y", floatToString(POSITION[Y]));
@@ -201,3 +279,4 @@ void publishSamples() {
   mqtt.publish("orientation/Y", floatToString(ORIENTATION[Y]));
   mqtt.publish("orientation/Z", floatToString(ORIENTATION[Z]));
 }
+#endif
