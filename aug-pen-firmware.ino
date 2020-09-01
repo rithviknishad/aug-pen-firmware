@@ -230,7 +230,8 @@ bool reconnectMQTT(bool firstTime) {
 #endif
 
 // stores the last sampling time, for measuring delta time between last two samples.
-float t0 = 0;
+uint32_t t0 = 0;
+uint32_t t1 = 0;
 
 void updateSamples() {
   // request 14 bytes of data from register 0x3B (ACCEL_XOUT_H).
@@ -250,8 +251,18 @@ void updateSamples() {
   for (int i = 0; i < 3; ++i)
     GYRO[i] = ((Wire.read() << 8) | Wire.read()) / GYRO_SENSITIVITY;
 
+  // move previous sampling time.
+  t0 = t1;
+
+  // fetch current sampling time.
+  t1 = millis();
+
+  // check overflow ?? skip this sampling.
+  if (t1 < t0)
+    return;
+
   // get sampling time delta in seconds.
-  float delta = (millis() / 1000) - t0;
+  float delta = (t1 - t0) / 1000;
 
   // compute velocity, position and orientation.
   for (int i = 0; i < 3; ++i) {
@@ -260,9 +271,6 @@ void updateSamples() {
     POSITION[i] += VELOCITY[i] * delta;
     ORIENTATION[i] += GYRO[i] * delta;
   }
-
-  // update t0 for getting time delta in next sampling.
-  t0 += delta;
 }
 
 char* floatToString(const float value) {
