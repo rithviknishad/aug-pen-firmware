@@ -1,6 +1,7 @@
 /*
   Author: RITHVIK NISHAD
   License: GNU General Public v2.0 (see LICENSE)
+  TODO: use micros() instead of millis() to support sampling rate above 1 KHz.
 */
 
 // #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
@@ -51,13 +52,13 @@
 */
 
 #ifndef RELEASE
-#define SERIAL_ENABLED       // Comment to disable Serial (INFO and DEBUGGING inclusive)
-#define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds. Comment this to disable post boot delay.
+#define SERIAL_ENABLED       // Comment to disable Serial communication. INFO and DEBUGGING will also be disabled.
+#define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds.
 #endif
 
 #ifdef SERIAL_ENABLED
-#define INFO_ENABLED  // Comment to disable INFO and LOG.
-#define DEBUG_ENABLED     // Comment to disable DEBUG.
+#define INFO_ENABLED  // Comment to disable INFO messages.
+#define DEBUG_ENABLED // Comment to disable DEBUG messages.
 #define SERIAL_PARAM(name, value) \
   Serial.print(F(name));          \
   Serial.print(value);
