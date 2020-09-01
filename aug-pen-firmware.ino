@@ -230,8 +230,7 @@ bool reconnectMQTT(bool firstTime) {
 #endif
 
 // stores the last sampling time, for measuring delta time between last two samples.
-uint32_t t0 = 0;
-uint32_t t1 = 0;
+uint32_t sampling_time[2] = {0};
 
 void updateSamples() {
   // request 14 bytes of data from register 0x3B (ACCEL_XOUT_H).
@@ -252,17 +251,17 @@ void updateSamples() {
     GYRO[i] = ((Wire.read() << 8) | Wire.read()) / GYRO_SENSITIVITY;
 
   // move previous sampling time.
-  t0 = t1;
+  sampling_time[0] = sampling_time[1];
 
   // fetch current sampling time.
-  t1 = millis();
+  sampling_time[1] = millis();
 
   // check overflow ?? skip this sampling.
-  if (t1 < t0)
+  if (sampling_time[1] < sampling_time[0])
     return;
 
   // get sampling time delta in seconds.
-  float delta = (t1 - t0) / 1000;
+  float delta = (sampling_time[1] - sampling_time[0]) / 1000;
 
   // compute velocity, position and orientation.
   for (int i = 0; i < 3; ++i) {
