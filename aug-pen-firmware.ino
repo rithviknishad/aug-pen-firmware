@@ -7,15 +7,17 @@
 // #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
 // #define USE_WIFI_MQTT // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
 
-#include <Wire.h>
-
 #include <MPU6050_6Axis_MotionApps20.h> // Library to interact w/ MPU6050's DMP engine to offload computation and reduce drift over time in integrated samplings.
 // The above library defines: _MPU6050_6AXIS_MOTIONAPPS20_H_ as header guard. Can be used to detect which API is being used for development.
 
+#include <Wire.h>
+
 #ifdef USE_WIFI_MQTT
-#include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+  #include <ESP8266WiFi.h>
+  #include <PubSubClient.h>
 #endif
+
+#ifndef _MPU6050_6AXIS_MOTIONAPPS20_H_
 
 /*
   AFS_SEL   FULL SCALE RANGE    LSB SENSITIVITY
@@ -39,6 +41,8 @@
 #define FS_SEL 0
 #define GYRO_SENSITIVITY  (131.0 / pow(2, FS_SEL)) // LSB/°/s
 
+#endif
+
 /* 
   SCHEMATIC
 
@@ -53,57 +57,78 @@
   _GPIO2    GPIO2       SCL         A5
   GND       GND         GND         GND
 */
+#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+  #ifdef ESP8266
+    #define MPU_INTERRUPT_PIN 3
+  #else
+    #define MPU_INTERRUPT_PIN 2
+  #endif;
+#endif
+
+#define MPU6050_I2C_ADDRESS 0x68
+
 
 #ifndef RELEASE
-#define SERIAL_ENABLED       // Comment to disable Serial communication. INFO and DEBUGGING will also be disabled.
-#define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds.
+  #define SERIAL_ENABLED       // Comment to disable Serial communication. INFO and DEBUGGING will also be disabled.
+  #define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds.
 #endif
 
 #ifdef SERIAL_ENABLED
-// #define INFO_ENABLED  // Comment to disable INFO messages (disabling allows working w/ Serial Plotter)
-#define DEBUG_ENABLED // Comment to disable DEBUG messages.
-#define SERIAL_PARAM(name, value) \
-  Serial.print('\t');             \
-  Serial.print(F(name));          \
-  Serial.print(value);
+  #define INFO_ENABLED    // Comment to disable INFO messages. (disabling allows working w/ Serial Plotter)
+  #define ASSERTS_ENABLED // Comment to disable ASSERT messages.
+  #define DEBUG_ENABLED   // Comment to disable DEBUG messages.
+  #define SERIAL_PARAM(name, value)                                                                        \
+    Serial.print('\t');                                                                                    \
+    Serial.print(F(name));                                                                                 \
+    Serial.print(value);
 #endif
 
 #ifdef INFO_ENABLED
-#define INFO_PARAM(name, value) SERIAL_PARAM(name, value)
-#define INFO(x) Serial.println(F(x)); // Use INFO("...") to Serial LOG a compile-time constant string.
+  #define INFO_PARAM(name, value) SERIAL_PARAM(name, value)
+  #define INFO(x) Serial.println(F(x)); // Use INFO("...") to Serial LOG a compile-time constant string.
 #else
-#define INFO_PARAM(name, val) ;
-#define INFO(x) ;
+  #define INFO_PARAM(name, val) ;
+  #define INFO(x) ;
+#endif
+
+#ifdef ASSERTS_ENABLED
+  #define ASSERT(x, msg) \
+    if (!x)              \
+      Serial.println(F(msg));
 #endif
 
 #ifdef DEBUG_ENABLED
-#define DEBUG(param)   \
-  Serial.print(param); \
-  Serial.print('\t');
-#define DEBUG_PARAM(name, value) SERIAL_PARAM(name, value)
-#define END_DEBUG Serial.println();
+  #define DEBUG(param)   \
+    Serial.print(param); \
+    Serial.print('\t');
+  #define DEBUG_PARAM(name, value) SERIAL_PARAM(name, value)
+  #define END_DEBUG Serial.println();
 #else
-#define DEBUG(param) ;
-#define DEBUG_PARAM(name, value) ;
-#define END_DEBUG ;
+  #define DEBUG(param) ;
+  #define DEBUG_PARAM(name, value) ;
+  #define END_DEBUG ;
 #endif
 
 char buff[100];       // A globally shared 100 byte buffer space.
 
-const int MPU = 0x68; // I2C Address of MPU-6050 (default).
+#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+  MPU6050 mpu = MPU6050(MPU6050_I2C_ADDRESS);
+#else
+  const int MPU = MPU6050_I2C_ADDRESS; // I2C Address of MPU-6050 (default).
+#endif
 
 #ifdef USE_WIFI_MQTT
-// WiFi Connection Configuration
-const char *wifi_ssid = "Honor 8C";     // SSID of the WiFi AP to be connected.
-const char *wifi_password = "16june01"; // Password of the WiFi AP.
+  // WiFi Connection Configuration
+  const char *wifi_ssid = "Honor 8C";     // SSID of the WiFi AP to be connected.
+  const char *wifi_password = "16june01"; // Password of the WiFi AP.
 
-// MQTT Connection Configuration
-const char *mqtt_server = "192.168.43.20";  // MQTT Broker Server Address.
-const char *mqtt_username = "user"; // MQTT Credentials - Username.
-const char *mqtt_password = "iL0v3MoonGaYoung"; // MQTT Credentials - Password.
+  // MQTT Connection Configuration
+  const char *mqtt_server = "192.168.43.20";  // MQTT Broker Server Address.
+  const char *mqtt_username = "user"; // MQTT Credentials - Username.
+  const char *mqtt_password = "iL0v3MoonGaYoung"; // MQTT Credentials - Password.
 
-WiFiClient wifi;  // WiFi Client for MQTT Client.
-PubSubClient mqtt(wifi);  // MQTT PubSub Client.
+  WiFiClient wifi;  // WiFi Client for MQTT Client.
+  PubSubClient mqtt(wifi);  // MQTT PubSub Client.
 #endif
 
 #define X     0
@@ -137,10 +162,10 @@ float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
 void initMPU6050(); // Initialises MPU-6050.
 
 #ifdef USE_WIFI_MQTT
-void initWiFi();                            // Initialises WiFi connectivity.
-void initMQTT();                            // Initialises MQTT Client.
-bool reconnectMQTT(bool firstTime = false); // Reconnects MQTT Client w/ broker.
-void publishSamples();                      // Publish the samples to respective MQTT topics.
+  void initWiFi();                            // Initialises WiFi connectivity.
+  void initMQTT();                            // Initialises MQTT Client.
+  bool reconnectMQTT(bool firstTime = false); // Reconnects MQTT Client w/ broker.
+  void publishSamples();                      // Publish the samples to respective MQTT topics.
 #endif
 
 inline unsigned long square(long x) { return x * x; }
@@ -187,6 +212,11 @@ void loop() {
   delay(100);
 }
 
+#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+volatile bool mpuInterrupt = false;
+void dmpDataRead() { mpuInterrupt = true; }
+#endif
+
 void initMPU6050() {
   INFO("Connecting to MPU-6050...");
 #ifdef ESP8266
@@ -194,12 +224,20 @@ void initMPU6050() {
 #else
   Wire.begin();
 #endif
+#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+  Wire.setClock(400000);
+  mpu.initialize();
+  pinMode(MPU_INTERRUPT_PIN, INPUT);
+#else
   Wire.beginTransmission(MPU);
   Wire.write(0x6B); // PWR_MGMT_1 Register
   Wire.write(0);    // Wake the MPU-6050.
   Wire.endTransmission(true);
+#endif
   INFO("MPU-6050 Connected. Status: Unknown");
 }
+
+#endif
 
 #ifdef USE_WIFI_MQTT
 void initWiFi() {
