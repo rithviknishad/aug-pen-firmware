@@ -1,7 +1,6 @@
 /*
   Author: RITHVIK NISHAD
   License: GNU General Public v2.0 (see LICENSE)
-  TODO: use micros() instead of millis() to support sampling rate above 1 KHz.
 */
 
 // #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
@@ -19,27 +18,27 @@
 
 #ifndef _MPU6050_6AXIS_MOTIONAPPS20_H_
 
-/*
-  AFS_SEL   FULL SCALE RANGE    LSB SENSITIVITY
-  ---------------------------------------------
-    0             ±2g            16384 LSB/g
-    1             ±4g            8192  LSB/g
-    2             ±8g            4096  LSB/g
-    3             ±16g           2048  LSB/g
-*/
-#define AFS_SEL 0
-#define ACCEL_SENSITIVITY (16384.0 / pow(2, AFS_SEL)) // LSB/g
+  /*
+    AFS_SEL   FULL SCALE RANGE    LSB SENSITIVITY
+    ---------------------------------------------
+      0             ±2g            16384 LSB/g
+      1             ±4g            8192  LSB/g
+      2             ±8g            4096  LSB/g
+      3             ±16g           2048  LSB/g
+  */
+  #define AFS_SEL 0
+  #define ACCEL_SENSITIVITY (16384.0 / pow(2, AFS_SEL)) // LSB/g
 
-/*
-  FS_SEL    FULL SCALE RANGE    LSB SENSITIVITY
-  ---------------------------------------------
-    0         ± 250 °/s           131  LSB/°/s
-    1         ± 500 °/s           65.5 LSB/°/s
-    2         ± 1000 °/s          32.8 LSB/°/s 
-    3         ± 2000 °/s          16.4 LSB/°/s
-*/
-#define FS_SEL 0
-#define GYRO_SENSITIVITY  (131.0 / pow(2, FS_SEL)) // LSB/°/s
+  /*
+    FS_SEL    FULL SCALE RANGE    LSB SENSITIVITY
+    ---------------------------------------------
+      0         ± 250 °/s           131  LSB/°/s
+      1         ± 500 °/s           65.5 LSB/°/s
+      2         ± 1000 °/s          32.8 LSB/°/s 
+      3         ± 2000 °/s          16.4 LSB/°/s
+  */
+  #define FS_SEL 0
+  #define GYRO_SENSITIVITY  (131.0 / pow(2, FS_SEL)) // LSB/°/s
 
 #endif
 
@@ -67,7 +66,6 @@
 
 #define MPU6050_I2C_ADDRESS 0x68
 
-
 #ifndef RELEASE
   #define SERIAL_ENABLED       // Comment to disable Serial communication. INFO and DEBUGGING will also be disabled.
   #define POST_BOOT_DELAY 2000 // Explicit Post Boot Delay in milli-seconds.
@@ -92,9 +90,16 @@
 #endif
 
 #ifdef ASSERTS_ENABLED
-  #define ASSERT(x, msg) \
-    if (!x)              \
-      Serial.println(F(msg));
+bool result;
+#define ASSERT(x, msg)                  \
+  if (!(result = x))                    \
+  {                                     \
+    Serial.println(F(msg));             \
+    Serial.print(F("ASSERT_RESULT: ")); \
+    Serial.print(result);               \
+  }
+#else
+  #define ASSERT(x, msg) ;
 #endif
 
 #ifdef DEBUG_ENABLED
@@ -109,12 +114,24 @@
   #define END_DEBUG ;
 #endif
 
-char buff[100];       // A globally shared 100 byte buffer space.
-
 #ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
   MPU6050 mpu = MPU6050(MPU6050_I2C_ADDRESS);
+
+  uint8_t dmpReady = false;   // DMP ready status.
+  uint8_t mpuIntStatus;       // Current interrupt status byte.
+  uint8_t devStatus;          // Status after each operation. [0 = success, !0 = error]
+  uint16_t packetSize;        // Expected DMP packet size (42 btes default)
+  uint16_t fifoCount;         // count of all bytes currently in FIFO.
+  uint8_t fifoBuffer[64];     // FIFO storage buffer
+
+  volatile bool mpuInterrupt = false;
+  void dmpDataReady() { mpuInterrupt = true; }
+
 #else
   const int MPU = MPU6050_I2C_ADDRESS; // I2C Address of MPU-6050 (default).
+  char buff[100];                      // A globally shared 100 byte buffer space.
+  inline unsigned long square(long x) { return x * x; }
+  inline float squaref(float x) { return x * x; }
 #endif
 
 #ifdef USE_WIFI_MQTT
@@ -168,169 +185,228 @@ void initMPU6050(); // Initialises MPU-6050.
   void publishSamples();                      // Publish the samples to respective MQTT topics.
 #endif
 
-inline unsigned long square(long x) { return x * x; }
-inline float squaref(float x) { return x * x; }
-
 void updateSamples(); // Get and update the samples
 
 void setup() {
-#ifdef SERIAL_ENABLED
-  Serial.begin(115200);
-#endif
+  #ifdef SERIAL_ENABLED
+    Serial.begin(115200);
+  #endif
 
   initMPU6050();
   
-#ifdef USE_WIFI_MQTT
-  initWiFi();
-  initMQTT();
-#endif
+  #ifdef USE_WIFI_MQTT
+    initWiFi();
+    initMQTT();
+  #endif
 
-#ifdef USE_WIFI_MQTT
-  INFO("AUG PEN MK I : boot_result=0x0, success.");
-#else
-  INFO("AUG PEN MK I : boot_result=0x1, success.");
-  INFO("WiFI and MQTT is disabled. Reason: 'USE_WIFI_MQTT' is not defined.");
-#endif
+  #ifdef USE_WIFI_MQTT
+    INFO("AUG PEN MK I : boot_result=0x0, success.");
+  #else
+    INFO("AUG PEN MK I : boot_result=0x1, success.");
+    INFO("WiFI and MQTT is disabled. Reason: 'USE_WIFI_MQTT' is not defined.");
+  #endif
 
-#ifdef POST_BOOT_DELAY
-  delay(POST_BOOT_DELAY);
-#endif
+  #ifdef POST_BOOT_DELAY
+    delay(POST_BOOT_DELAY);
+  #endif
 }
 
 void loop() {
+
+  if (!dmpReady)
+    return; // skip loop if dmp failed to load.
+
   updateSamples();
   DEBUG_SAMPLES;
 
-#ifdef USE_WIFI_MQTT
-  mqtt.connected()
-      ? mqtt.loop()
-      : reconnectMQTT();
+  #ifdef USE_WIFI_MQTT
+    mqtt.connected()
+        ? mqtt.loop()
+        : reconnectMQTT();
 
-  publishSamples();
-#endif
+    publishSamples();
+  #endif
 
   delay(100);
 }
 
-#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
-volatile bool mpuInterrupt = false;
-void dmpDataRead() { mpuInterrupt = true; }
-#endif
-
 void initMPU6050() {
   INFO("Connecting to MPU-6050...");
-#ifdef ESP8266
-  Wire.begin(0, 2);
-#else
-  Wire.begin();
-#endif
-#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
-  Wire.setClock(400000);
-  mpu.initialize();
-  pinMode(MPU_INTERRUPT_PIN, INPUT);
-#else
-  Wire.beginTransmission(MPU);
-  Wire.write(0x6B); // PWR_MGMT_1 Register
-  Wire.write(0);    // Wake the MPU-6050.
-  Wire.endTransmission(true);
-#endif
-  INFO("MPU-6050 Connected. Status: Unknown");
-}
+  #ifdef ESP8266
+    Wire.begin(0, 2);
+  #else
+    Wire.begin();
+  #endif
 
-#endif
+  #ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+    Wire.setClock(400000);
+
+    mpu.initialize();
+    ASSERT(mpu.testConnection(), "MPU-6050 connection error !")
+
+    pinMode(MPU_INTERRUPT_PIN, INPUT);
+
+    INFO("Initializing Digital Motion Processing Engine...");
+    devStatus = mpu.dmpInitialize();
+    ASSERT(devStatus == 0, "DMP Initialization failed.")
+
+    INFO("Setting custom offsets...");
+    mpu.setXGyroOffset(220);
+    mpu.setYGyroOffset(76);
+    mpu.setZGyroOffset(-85);
+    mpu.setZAccelOffset(1788);
+
+    INFO("Calibrating Accelerometer and Gyroscope...");
+    mpu.CalibrateAccel(6);
+    mpu.CalibrateGyro(6);
+
+    INFO("Enabling DMP Engine...");
+    mpu.setDMPEnabled(true);
+
+    INFO("Attaching Interrupt Service Routine...");
+    attachInterrupt(digitalPinToInterrupt(MPU_INTERRUPT_PIN), dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+
+    packetSize = mpu.dmpGetFIFOPacketSize();
+
+    INFO("DMP Engine is ready.");
+    dmpReady = true;
+
+  #else
+    Wire.beginTransmission(MPU);
+    Wire.write(0x6B); // PWR_MGMT_1 Register
+    Wire.write(0);    // Wake the MPU-6050.
+    Wire.endTransmission(true);
+    
+    INFO("MPU-6050 Connected. Status: Unknown");
+  #endif  
+}
 
 #ifdef USE_WIFI_MQTT
-void initWiFi() {
-  INFO("Connecting to WiFi AP...");
-  WiFi.begin(wifi_ssid, wifi_password);
 
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-#ifdef INFO_ENABLED
-    Serial.print('.');
-#endif
+  void initWiFi() {
+    INFO("Connecting to WiFi AP...");
+    WiFi.begin(wifi_ssid, wifi_password);
+
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+  #ifdef INFO_ENABLED
+      Serial.print('.');
+  #endif
+    }
+    INFO_PARAM("WiFi Connected. What's my IP? ", WiFi.localIP());
   }
-  INFO_PARAM("WiFi Connected. What's my IP? ", WiFi.localIP());
-}
 
-void initMQTT() {
-  INFO("Connecting to MQTT Broker Server...");
-  mqtt.setServer(mqtt_server, 1883);
-  reconnectMQTT(true);
-}
+  void initMQTT() {
+    INFO("Connecting to MQTT Broker Server...");
+    mqtt.setServer(mqtt_server, 1883);
+    reconnectMQTT(true);
+  }
 
-bool reconnectMQTT(bool firstTime) {
-  if (!firstTime)
-    INFO("MQTT Reconnecting...");
+  bool reconnectMQTT(bool firstTime) {
+    if (!firstTime)
+      INFO("MQTT Reconnecting...");
 
-  while (!mqtt.connected()) {
-    if (!mqtt.connect("AUG_PEN_MK_I", mqtt_username, mqtt_password)) {
-      INFO_PARAM("MQTT connection unsuccessfull. Status: ", mqtt.state());
-      INFO("Trying again in 3 seconds...");
-      delay(3000);
+    while (!mqtt.connected()) {
+      if (!mqtt.connect("AUG_PEN_MK_I", mqtt_username, mqtt_password)) {
+        INFO_PARAM("MQTT connection unsuccessfull. Status: ", mqtt.state());
+        INFO("Trying again in 3 seconds...");
+        delay(3000);
+      }
+    }
+    INFO_PARAM("MQTT Connected. Status: ", mqtt.state());
+    return mqtt.connected();
+  }
+  
+#endif
+
+#ifdef _MPU6050_6AXIS_MOTIONAPPS20_H_
+
+  void updateSamples() {
+    while(!mpuInterrupt && fifoCount < packetSize) {
+      if (mpuInterrupt && fifoCount < packetSize)
+        fifoCount = mpu.getFIFOCount();
+    }
+
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
+
+    fifoCount = mpu.getFIFOCount();
+
+    if (fifoCount < packetSize) {
+      
+    } else if ((mpuIntStatus & (0x01 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024) {
+      INFO("FIFO overflow! Resetting...");
+      mpu.resetFIFO();
+    } else if (mpuIntStatus & (0x01 << MPU6050_INTERRUPT_DMP_INT_BIT)) {
+      while (fifoCount >= packetSize) {
+        mpu.getFIFOBytes(fifoBuffer, packetSize);
+        fifoCount -= packetSize;
+      }
     }
   }
-  INFO_PARAM("MQTT Connected. Status: ", mqtt.state());
-  return mqtt.connected();
-}
+
+#else
+  // stores the last sampling time, for measuring delta time between last two samples.
+  uint32_t sampling_time[2] = {0};
+
+  void updateSamples() {
+    // request 14 bytes of data from register 0x3B (ACCEL_XOUT_H).
+    Wire.beginTransmission(MPU);
+    Wire.write(0x3B);
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU, 14, true);
+    
+    // Read all ACCEL registers (2 * 3 bytes) and store in m/s^2.
+    for (int i = 0; i < 3; ++i)
+      ACCEL[i] = (((Wire.read() << 8) | Wire.read()) / ACCEL_SENSITIVITY) * 9.80655;
+
+    // Read temperature register (2 bytes) and store as degree celsius.
+    float temp = (((int)(Wire.read() << 8) | Wire.read()) / 340.0) + 36.53;
+
+    // Read all GRYO regsters (2 * 3 bytes) and store in deg/s.
+    for (int i = 0; i < 3; ++i)
+      GYRO[i] = ((Wire.read() << 8) | Wire.read()) / GYRO_SENSITIVITY;
+
+    // move previous sampling time.
+    sampling_time[0] = sampling_time[1];
+
+    // fetch current sampling time.
+    sampling_time[1] = millis();
+
+    // check overflow ?? skip this sampling.
+    if (sampling_time[1] < sampling_time[0])
+      return;
+
+    // get sampling time delta in seconds.
+    float delta = (sampling_time[1] - sampling_time[0]) / 1000;
+
+    // compute velocity, position and orientation.
+    for (int i = 0; i < 3; ++i) {
+      VELOCITY[i] += ACCEL[i] * delta;
+      
+      POSITION[i] += VELOCITY[i] * delta;
+      ORIENTATION[i] += GYRO[i] * delta;
+    }
+  }
+
 #endif
 
-// stores the last sampling time, for measuring delta time between last two samples.
-uint32_t sampling_time[2] = {0};
-
-void updateSamples() {
-  // request 14 bytes of data from register 0x3B (ACCEL_XOUT_H).
-  Wire.beginTransmission(MPU);
-  Wire.write(0x3B);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU, 14, true);
-  
-  // Read all ACCEL registers (2 * 3 bytes) and store in m/s^2.
-  for (int i = 0; i < 3; ++i)
-    ACCEL[i] = (((Wire.read() << 8) | Wire.read()) / ACCEL_SENSITIVITY) * 9.80655;
-
-  // Read temperature register (2 bytes) and store as degree celsius.
-  float temp = (((int)(Wire.read() << 8) | Wire.read()) / 340.0) + 36.53;
-
-  // Read all GRYO regsters (2 * 3 bytes) and store in deg/s.
-  for (int i = 0; i < 3; ++i)
-    GYRO[i] = ((Wire.read() << 8) | Wire.read()) / GYRO_SENSITIVITY;
-
-  // move previous sampling time.
-  sampling_time[0] = sampling_time[1];
-
-  // fetch current sampling time.
-  sampling_time[1] = millis();
-
-  // check overflow ?? skip this sampling.
-  if (sampling_time[1] < sampling_time[0])
-    return;
-
-  // get sampling time delta in seconds.
-  float delta = (sampling_time[1] - sampling_time[0]) / 1000;
-
-  // compute velocity, position and orientation.
-  for (int i = 0; i < 3; ++i) {
-    VELOCITY[i] += ACCEL[i] * delta;
-    
-    POSITION[i] += VELOCITY[i] * delta;
-    ORIENTATION[i] += GYRO[i] * delta;
-  }
-}
-
-char* floatToString(const float value) {
-  dtostrf(value, 4, 2, buff);
-  return buff;
-}
-
 #ifdef USE_WIFI_MQTT
-void publishSamples() {
-  mqtt.publish("position/X", floatToString(POSITION[X]));
-  mqtt.publish("position/Y", floatToString(POSITION[Y]));
-  mqtt.publish("position/Z", floatToString(POSITION[Z]));
 
-  mqtt.publish("orientation/X", floatToString(ORIENTATION[X]));
-  mqtt.publish("orientation/Y", floatToString(ORIENTATION[Y]));
-  mqtt.publish("orientation/Z", floatToString(ORIENTATION[Z]));
-}
+  char* floatToString(const float value) {
+    dtostrf(value, 4, 2, buff);
+    return buff;
+  }
+
+  void publishSamples() {
+    mqtt.publish("position/X", floatToString(POSITION[X]));
+    mqtt.publish("position/Y", floatToString(POSITION[Y]));
+    mqtt.publish("position/Z", floatToString(POSITION[Z]));
+
+    mqtt.publish("orientation/X", floatToString(ORIENTATION[X]));
+    mqtt.publish("orientation/Y", floatToString(ORIENTATION[Y]));
+    mqtt.publish("orientation/Z", floatToString(ORIENTATION[Z]));
+  }
+
 #endif
