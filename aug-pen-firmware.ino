@@ -3,8 +3,9 @@
   License: GNU General Public v2.0 (see LICENSE)
 */
 
-// #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
-// #define USE_WIFI_MQTT // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
+// #define RELEASE         // Comment this to compile without including development and diagnostics code for faster performance.
+// #define USE_WIFI_MQTT   // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
+// #define TEAPOT_ENABLED  // Comment this line to disable support for Teapot.
 
 #include <MPU6050_6Axis_MotionApps20.h> // Library to interact w/ MPU6050's DMP engine to offload computation and reduce drift over time in integrated samplings.
 // The above library defines: _MPU6050_6AXIS_MOTIONAPPS20_H_ as header guard. Can be used to detect which API is being used for development.
@@ -127,11 +128,28 @@ bool result;
   volatile bool mpuInterrupt = false;
   void dmpDataReady() { mpuInterrupt = true; }
 
+  Quaternion q;        // [w, x, y, z] MPU6050 DMP quaternion container.
+  VectorInt16 aa;      // [x, y, z] ACCEL_RAW.
+  VectorInt16 aaReal;  // [x, y, z] Gravity free ACCEL.
+  VectorInt16 aaWorld; // [x, y, z] World frame ACCEL.
+  VectorFloat gravity;  // [x, y, z] Gravity vector.
+  float euler[3];      // [psi, theta, phi] Euler angles.
+  float ypr[3];        // [yaw, pitch, roll] angles.
+
 #else
+
   const int MPU = MPU6050_I2C_ADDRESS; // I2C Address of MPU-6050 (default).
+  
   char buff[100];                      // A globally shared 100 byte buffer space.
+  
   inline unsigned long square(long x) { return x * x; }
   inline float squaref(float x) { return x * x; }
+
+#endif
+
+#ifdef TEAPOT_ENABLED
+  #define SERIAL_ENABLED
+  uint8_t teapotPacket[14] = {'$', 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, '\r', '\n'};
 #endif
 
 #ifdef USE_WIFI_MQTT
@@ -155,22 +173,27 @@ bool result;
 #define YAW   Y
 #define PITCH Z
 
-float ACCEL[3] = {0};  // Current raw acceleration samples from MPU-6050.
-float GYRO[3]  = {0};  // Current raw gyroscope samples from MPU-6050.
+// float ACCEL[3] = {0};  // Current raw acceleration samples from MPU-6050.
+// float GYRO[3]  = {0};  // Current raw gyroscope samples from MPU-6050.
 
-float VELOCITY[3] = {0}; // Current velocity, integrated from ACCEL.
+// float VELOCITY[3] = {0}; // Current velocity, integrated from ACCEL.
 
-float POSITION[3]     = {0};  // Current position, integrated from VELOCITY.
-float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
+// float POSITION[3]     = {0};  // Current position, integrated from VELOCITY.
+// float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
 
-#define DEBUG_VECTOR(nameX, nameY, nameZ, vect) \
-  DEBUG_PARAM(nameX, vect[X]);                  \
-  DEBUG_PARAM(nameY, vect[Y]);                  \
+#define DEBUG_VECTOR_ARRAY(nameX, nameY, nameZ, vect) \
+  DEBUG_PARAM(nameX, vect[X]);                        \
+  DEBUG_PARAM(nameY, vect[Y]);                        \
   DEBUG_PARAM(nameZ, vect[Z]);
 
-#define DEBUG_SAMPLES                             \
-  DEBUG_VECTOR("AX=", "AY=", "AZ=", ACCEL);       \
-  DEBUG_VECTOR("GX=", "GY=", "GZ=", GYRO);        \
+#define DEBUG_VECTOR(nameX, nameY, nameZ, vect) \
+  DEBUG_PARAM(nameX, vect.x);                        \
+  DEBUG_PARAM(nameY, vect.y);                        \
+  DEBUG_PARAM(nameZ, vect.z);
+
+#define DEBUG_SAMPLES                           \
+  DEBUG_VECTOR("AX=", "AY=", "AZ=", aa);        \
+  DEBUG_VECTOR_ARRAY("GX=", "GY=", "GZ=", ypr); \
   END_DEBUG;
   // DEBUG_VECTOR("VX=", "VY=", "VZ=", VELOCITY);    \
   // DEBUG_VECTOR("PX=", "PY=", "PZ=", POSITION);    \
@@ -226,8 +249,6 @@ void loop() {
 
     publishSamples();
   #endif
-
-  delay(100);
 }
 
 void initMPU6050() {
@@ -251,10 +272,10 @@ void initMPU6050() {
     ASSERT(devStatus == 0, "DMP Initialization failed.")
 
     INFO("Setting custom offsets...");
-    mpu.setXGyroOffset(220);
-    mpu.setYGyroOffset(76);
-    mpu.setZGyroOffset(-85);
-    mpu.setZAccelOffset(1788);
+    // mpu.setXGyroOffset(220);
+    // mpu.setYGyroOffset(76);
+    // mpu.setZGyroOffset(-85);
+    // mpu.setZAccelOffset(1788);
 
     INFO("Calibrating Accelerometer and Gyroscope...");
     mpu.CalibrateAccel(6);
@@ -343,6 +364,33 @@ void initMPU6050() {
         mpu.getFIFOBytes(fifoBuffer, packetSize);
         fifoCount -= packetSize;
       }
+
+      mpu.dmpGetQuaternion(&q, fifoBuffer);
+      mpu.dmpGetAccel(&aa, fifoBuffer);
+      mpu.dmpGetGravity(&gravity, &q);
+
+      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+      mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+      mpu.dmpGetLinearAccelInWorld(&aaWorld, &aa, &q);
+
+      #ifdef TEAPOT_ENABLED
+
+        #define mapBufferToTeapot(tp, fb) teapotPacket[tp] = fifoBuffer[fb];
+
+        mapBufferToTeapot(2, 0);
+        mapBufferToTeapot(3, 1);
+        mapBufferToTeapot(4, 4);
+        mapBufferToTeapot(5, 5);
+        mapBufferToTeapot(6, 8);
+        mapBufferToTeapot(7, 9);
+        mapBufferToTeapot(8, 12);
+        mapBufferToTeapot(9, 13);
+
+        Serial.write(teapotPacket, 14); // flushes teapotPacket to Serial.
+
+        teapotPacket[11]++; // teapot packetCount (overflow loop at 0xFF is intended).
+
+      #endif
     }
   }
 
