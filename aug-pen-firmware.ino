@@ -57,12 +57,12 @@
 #endif
 
 #ifdef SERIAL_ENABLED
-#define INFO_ENABLED  // Comment to disable INFO messages.
+// #define INFO_ENABLED  // Comment to disable INFO messages (disabling allows working w/ Serial Plotter)
 #define DEBUG_ENABLED // Comment to disable DEBUG messages.
 #define SERIAL_PARAM(name, value) \
+  Serial.print('\t');             \
   Serial.print(F(name));          \
-  Serial.print(value);            \
-  Serial.print('\t');
+  Serial.print(value);
 #endif
 
 #ifdef INFO_ENABLED
@@ -186,7 +186,7 @@ void loop() {
 
 void initMPU6050() {
   INFO("Connecting to MPU-6050...");
-#ifdef USE_WIFI_MQTT
+#ifdef ESP8266
   Wire.begin(0, 2);
 #else
   Wire.begin();
