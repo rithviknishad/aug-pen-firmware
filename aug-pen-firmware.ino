@@ -9,6 +9,9 @@
 
 #include <Wire.h>
 
+#include <MPU6050_6Axis_MotionApps20.h> // Library to interact w/ MPU6050's DMP engine to offload computation and reduce drift over time in integrated samplings.
+// The above library defines: _MPU6050_6AXIS_MOTIONAPPS20_H_ as header guard. Can be used to detect which API is being used for development.
+
 #ifdef USE_WIFI_MQTT
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
