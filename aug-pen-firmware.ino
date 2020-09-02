@@ -5,7 +5,7 @@
 */
 
 // #define RELEASE       // Comment this to compile without including development and diagnostics code for faster performance.
-#define USE_WIFI_MQTT // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
+// #define USE_WIFI_MQTT // Comment this line to disable WiFi and MQTT. (Allows compatability for use w/ non wifi boards for development and testing)
 
 #include <Wire.h>
 
@@ -61,7 +61,8 @@
 #define DEBUG_ENABLED // Comment to disable DEBUG messages.
 #define SERIAL_PARAM(name, value) \
   Serial.print(F(name));          \
-  Serial.print(value);
+  Serial.print(value);            \
+  Serial.print('\t');
 #endif
 
 #ifdef INFO_ENABLED
@@ -124,11 +125,11 @@ float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
 
 #define DEBUG_SAMPLES                             \
   DEBUG_VECTOR("AX=", "AY=", "AZ=", ACCEL);       \
-  DEBUG_VECTOR("VX=", "VY=", "VZ=", VELOCITY);    \
-  DEBUG_VECTOR("PX=", "PY=", "PZ=", POSITION);    \
   DEBUG_VECTOR("GX=", "GY=", "GZ=", GYRO);        \
-  DEBUG_VECTOR("OX=", "OY=", "OZ=", ORIENTATION); \
   END_DEBUG;
+  // DEBUG_VECTOR("VX=", "VY=", "VZ=", VELOCITY);    \
+  // DEBUG_VECTOR("PX=", "PY=", "PZ=", POSITION);    \
+  // DEBUG_VECTOR("OX=", "OY=", "OZ=", ORIENTATION); \
 
 void initMPU6050(); // Initialises MPU-6050.
 
@@ -185,7 +186,11 @@ void loop() {
 
 void initMPU6050() {
   INFO("Connecting to MPU-6050...");
+#ifdef USE_WIFI_MQTT
   Wire.begin(0, 2);
+#else
+  Wire.begin();
+#endif
   Wire.beginTransmission(MPU);
   Wire.write(0x6B); // PWR_MGMT_1 Register
   Wire.write(0);    // Wake the MPU-6050.
