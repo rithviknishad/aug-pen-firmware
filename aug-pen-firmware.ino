@@ -181,19 +181,31 @@ bool result;
 // float POSITION[3]     = {0};  // Current position, integrated from VELOCITY.
 // float ORIENTATION[3]  = {0};  // Current orientation, integrated from GYRO.
 
-#define DEBUG_VECTOR_ARRAY(nameX, nameY, nameZ, vect) \
-  DEBUG_PARAM(nameX, vect[X]);                        \
-  DEBUG_PARAM(nameY, vect[Y]);                        \
-  DEBUG_PARAM(nameZ, vect[Z]);
+#define GET_VARIABLE_NAME(Variable) (#Variable)
 
-#define DEBUG_VECTOR(nameX, nameY, nameZ, vect) \
-  DEBUG_PARAM(nameX, vect.x);                        \
-  DEBUG_PARAM(nameY, vect.y);                        \
-  DEBUG_PARAM(nameZ, vect.z);
+#define DEBUG_VECTOR(v)                  \
+  Serial.print(F(GET_VARIABLE_NAME(v))); \
+  Serial.print(F(" = ["));               \
+  Serial.print(v.x);                     \
+  Serial.print(", ");                    \
+  Serial.print(v.y);                     \
+  Serial.print(", ");                    \
+  Serial.print(v.z);                     \
+  Serial.print(F("]\t"));
 
-#define DEBUG_SAMPLES                           \
-  DEBUG_VECTOR("AX=", "AY=", "AZ=", aa);        \
-  DEBUG_VECTOR_ARRAY("GX=", "GY=", "GZ=", ypr); \
+#define DEBUG_ARRAY(arr)                   \
+  Serial.print(F(GET_VARIABLE_NAME(arr))); \
+  Serial.print(F(" = ["));                 \
+  Serial.print(arr[X]);                    \
+  Serial.print(", ");                      \
+  Serial.print(arr[Y]);                    \
+  Serial.print(", ");                      \
+  Serial.print(arr[Z]);                    \
+  Serial.print(F("]\t"));
+
+#define DEBUG_SAMPLES    \
+  DEBUG_VECTOR(aaWorld); \
+  DEBUG_ARRAY(ypr);      \
   END_DEBUG;
   // DEBUG_VECTOR("VX=", "VY=", "VZ=", VELOCITY);    \
   // DEBUG_VECTOR("PX=", "PY=", "PZ=", POSITION);    \
@@ -212,7 +224,7 @@ void updateSamples(); // Get and update the samples
 
 void setup() {
   #ifdef SERIAL_ENABLED
-    Serial.begin(115200);
+    Serial.begin(2000000);
   #endif
 
   initMPU6050();
@@ -278,8 +290,8 @@ void initMPU6050() {
     // mpu.setZAccelOffset(1788);
 
     INFO("Calibrating Accelerometer and Gyroscope...");
-    mpu.CalibrateAccel(6);
-    mpu.CalibrateGyro(6);
+    mpu.CalibrateAccel(12);
+    mpu.CalibrateGyro(12);
 
     INFO("Enabling DMP Engine...");
     mpu.setDMPEnabled(true);
@@ -371,7 +383,7 @@ void initMPU6050() {
 
       mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
       mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
-      mpu.dmpGetLinearAccelInWorld(&aaWorld, &aa, &q);
+      mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
 
       #ifdef TEAPOT_ENABLED
 
