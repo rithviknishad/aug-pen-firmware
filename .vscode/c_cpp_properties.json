@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "STANDALONE 3D POS",
+            "includePath": [
+                "/home/coffeelake/Arduino/libraries/**",
+                "/home/coffeelake/apps/arduino-1.8.12/**",
+                "/home/coffeelake/.arduino15/packages/esp8266/hardware/esp8266/2.7.4/**",
+                "${workspaceFolder}/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c11",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "clang-x64"
+        }
+    ],
+    "version": 4
+}

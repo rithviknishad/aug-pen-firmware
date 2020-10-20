@@ -1,0 +1,10 @@
+
+Standa,31,-0.16,
+18437,-0.03,-0.01,-0.05,0.01,-0.04,-0.02,0.15,-0.31,-0.16,
+
+Standalone 3D Position Sensor
+version: 0.1-alpha
+Licensed under the GNU General Public License v2.0
+
+S3DPS : boot() invoked.
+Connecting to MPU-6050...
