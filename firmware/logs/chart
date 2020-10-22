@@ -1,8 +1,0 @@
-{
-  "data": {"url": "firmware/logs/S3DPS 2020-10-19-152637.csv"},
-  "mark": "line",
-  "encoding": {
-    "x": {"timeUnit": "month", "field": "date"},
-    "y": {"aggregate": "mean", "field": "precipitation"}
-  }
-}
