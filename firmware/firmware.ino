@@ -1,4 +1,6 @@
 /*
+  Standalone Position Sensor Firmware. (alpha)
+
   Authors: 
     * RITHVIK NISHAD        https://github.com/rithviknishad
     * KARTHIK P AJITHKUMAR  https://github.com/karthikpaji
@@ -79,30 +81,11 @@
 
 const int ACCEL_SENSITIVITY = 16384 / pow(2, AFS_SEL);  // Sensitivity of the Accelerometer. (LSB/g)
 
-#define ONLY_X_AXIS             1                       // If selected in AXES, computation will be performed only for (x).
-#define ONLY_XY_AXIS            2                       // If selected in AXES, computation will be performed only for (x, y).
-#define ONLY_XYZ_AXIS           3                       // If selected in AXES, computation will be performed only for (x, y, z).
+#define AXIS_X                0x01                      // If selected in AXES, computation will be performed for x axis.
+#define AXIS_Y                0x02                      // If selected in AXES, computation will be performed for y axis.
+#define AXIS_Z                0x04                      // If selected in AXES, computation will be performed for z axis.
 
-#define AXES                    ONLY_XY_AXIS            // Vector dimension. (Setting is not used if DMP_ENGINE_ENABLED is defined)
-
-#if defined(DMP_ENGINE_ENABLED)
-  #define AXES                  ONLY_XYZ_AXIS           // if DMP_ENGINE_ENABLED, overrides AXES to ONLY_XYZ_AXIS.
-#endif
-
-#define CALIBRATION_ENABLED                             // Enables gravity compensation by calibrating at start-up. (Comment to disable)
-
-#if defined(DMP_ENGINE_ENABLED)
-  #undef CALIBRATION_ENABLED                            // Overrides and purges CALIBRATION_ENABLED, if DMP_ENGINE_ENABLED is defined.
-#endif
-
-#if defined(CALIBRATION_ENABLED)
-  void calibrate();
-  VectorInt16 RAW_ACCEL_OFFSET = VectorInt16();         // RAW Acceleration offset. (calibration)
-  #define CALIBRATION_SAMPLES   1000                    // No. of samples to be taken while calibrating.
-#else
-  void calibrate() {}
-#endif
-
+#define AXES                  AXIS_X|AXIS_Y             // Vector dimension.
 
 #define OP_RATE               1000                      // Processing and output rate. (packets per second)
 #define OP_DELTA_MICROS       1e+6 / OP_RATE            // Output frame interval. (microseconds)
@@ -234,7 +217,7 @@ int i;  // A globally shared iterator, to reduce dynamic mem usage in synchronou
 
   #define SW(b)   Serial.write(b);                      // Serial writes binary data.
 
-  #define SOF     SW(0x00) SW(0x00) SW(0x0C) SW(0x74)   // Start of frame byte.
+  #define SOF     SW(0x00) SW(0x00) SW(0x0C) SW(0x74)   // Start of frame byte. (for packet syncing)
   #define DELIM   SO(",")                               // Channel Delimiter.
   #define EOF     SW('\r') SW('\n')                     // End of frame byte.
 
@@ -458,69 +441,51 @@ void initMPU6050() {
   char *floatToString(const float value); { dtostrf(value, 4, 2, buff); return buff; }
 #endif
 
-#if defined(CALIBRATION_ENABLED)
-  void calibrate() {
-    INFO("Calbirating...");
-    
-    uint32_t acc[AXES] = {0};
-
-    for (samples = 0; samples < CALIBRATION_SAMPLES; ++samples)
-    {
-      requestAcceleration();
-      for (i = 0; i < AXES; ++i)
-        acc[i] += (uint32_t)((Wire.read() << 8) | Wire.read());
-    }
-
-    _INFO("Calibration OK. RAW_ACCEL_OFFSET = [")
-    for (i = 0; i < AXES; ++i) {
-      RAW_ACCEL_OFFSET[i] = acc[i] / CALIBRATION_SAMPLES;
-      
-      INFO_VAR(RAW_ACCEL_OFFSET[i]);
-      _INFO(", ");
-    }
-    INFO("].");
+void sample() {
+  while(!mpuInterrupt && fifoCount < packetSize) {
+    if (mpuInterrupt && fifoCount < packetSize)
+      fifoCount = mpu.getFIFOCount();
   }
-#endif
 
-#if defined(DMP_ENGINE_ENABLED)
-  void sample() {
-    while(!mpuInterrupt && fifoCount < packetSize) {
-      if (mpuInterrupt && fifoCount < packetSize)
-        fifoCount = mpu.getFIFOCount();
+  mpuInterrupt = false;
+  mpuIntStatus = mpu.getIntStatus();
+
+  fifoCount = mpu.getFIFOCount();
+
+  if (fifoCount < packetSize) {
+    
+  } else if ((mpuIntStatus & (0x01 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024) {
+    INFO("FIFO overflow! Resetting...");
+    mpu.resetFIFO();
+  } else if (mpuIntStatus & (0x01 << MPU6050_INTERRUPT_DMP_INT_BIT)) {
+    while (fifoCount >= packetSize) {
+      mpu.getFIFOBytes(fifoBuffer, packetSize);
+      fifoCount -= packetSize;
     }
 
-    mpuInterrupt = false;
-    mpuIntStatus = mpu.getIntStatus();
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetAccel(&RAW_ACCEL, fifoBuffer);
 
-    fifoCount = mpu.getFIFOCount();
+    mpu.dmpGetGravity(&gravityVector, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravityVector);
 
-    if (fifoCount < packetSize) {
+    mpu.dmpGetLinearAccel(&REAL_ACCEL, &RAW_ACCEL, &gravityVector);
+    mpu.dmpGetLinearAccelInWorld(&WORLD_ACCEL, &REAL_ACCEL, &q);
+
+    #if defined(COMPUTE_VELOCITY)
       
-    } else if ((mpuIntStatus & (0x01 << MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024) {
-      INFO("FIFO overflow! Resetting...");
-      mpu.resetFIFO();
-    } else if (mpuIntStatus & (0x01 << MPU6050_INTERRUPT_DMP_INT_BIT)) {
-      while (fifoCount >= packetSize) {
-        mpu.getFIFOBytes(fifoBuffer, packetSize);
-        fifoCount -= packetSize;
-      }
+      #if (AXES & AXIS_X)
+        ACCEL.x = WORLD_ACCEL.x * 9.80665 / ACCEL_SENSITIVITY;
+      #endif
 
-      mpu.dmpGetQuaternion(&q, fifoBuffer);
-      mpu.dmpGetAccel(&RAW_ACCEL, fifoBuffer);
+      #if (AXES & AXIS_Y)
+        ACCEL.y = WORLD_ACCEL.y * 9.80665 / ACCEL_SENSITIVITY;
+      #endif
 
-      mpu.dmpGetGravity(&gravityVector, &q);
-      mpu.dmpGetYawPitchRoll(ypr, &q, &gravityVector);
+      #if (AXES & AXIS_Z)
+        ACCEL.z = WORLD_ACCEL.z * 9.80665 / ACCEL_SENSITIVITY;
+      #endif
 
-      mpu.dmpGetLinearAccel(&REAL_ACCEL, &RAW_ACCEL, &gravityVector);
-      mpu.dmpGetLinearAccelInWorld(&WORLD_ACCEL, &REAL_ACCEL, &q);
-
-      // if (-ACCEL_SUPPRESSION < WORLD_ACCEL.x && WORLD_ACCEL.x < ACCEL_SUPPRESSION) WORLD_ACCEL.x = 0;
-      // if (-ACCEL_SUPPRESSION < WORLD_ACCEL.y && WORLD_ACCEL.y < ACCEL_SUPPRESSION) WORLD_ACCEL.y = 0;
-      // if (-ACCEL_SUPPRESSION < WORLD_ACCEL.z && WORLD_ACCEL.z < ACCEL_SUPPRESSION) WORLD_ACCEL.z = 0;
-
-      ACCEL.x = WORLD_ACCEL.x * 9.80665 / ACCEL_SENSITIVITY;
-      ACCEL.y = WORLD_ACCEL.y * 9.80665 / ACCEL_SENSITIVITY;
-      ACCEL.z = WORLD_ACCEL.z * 9.80665 / ACCEL_SENSITIVITY;
 
       uint32_t current_micros = micros();
 
@@ -531,76 +496,39 @@ void initMPU6050() {
         return;
       }
 
-      VELOCITY.x += ACCEL.x * delta;      
-      VELOCITY.y += ACCEL.y * delta;
-      VELOCITY.z += ACCEL.z * delta;      
-
-      POSITION.x += VELOCITY.x * delta;
-      POSITION.y += VELOCITY.y * delta;
-      POSITION.z += VELOCITY.z * delta;
-
       lastSampleTime = current_micros;
+    #endif
 
-    }
-  }
-#else
-  void sample() {
-    requestAcceleration();
-
-    for (i = 0; i < AXES; ++i) {
-      #if defined(CALIBRATION_ENABLED)
-          RAW_ACCEL[i] += ((Wire.read() << 8) | Wire.read()) - RAW_ACCEL_OFFSET[i];
-      #else
-          RAW_ACCEL[i] += (Wire.read() << 8) | Wire.read();
-      #endif
-    }
-
-    ++samples;
-  }
-#endif
-
-#if defined(DMP_ENGINE_ENABLED)
-  void __spfPublish() {
-    START_PLOT
-
-    plot(ACCEL.x * 100);
-    plot(ACCEL.y * 100);
-    // plot(ACCEL.z * 100);
-
-    plot(VELOCITY.x * 100);
-    plot(VELOCITY.y * 100);
-    // plot(VELOCITY.z * 100);
-
-    plot(POSITION.x * 100);
-    plot(POSITION.y * 100);
-    // plot(POSITION.z * 100);
-  }
-#else
-  void __spfPublish() {
-    for (i = 0; i < AXES; ++i) {
-      accel[i] = RAW_ACCEL[i] * 9.80665 / (samples * ACCEL_SENSITIVITY);
-
-      if (-ACCEL_SUPPRESSION < accel[i] && accel[i] < ACCEL_SUPPRESSION)
-        accel[i] = 0.0;
-
-      #if defined(COMPUTE_VELOCITY)
-        VELOCITY[i] += accel[i] * OP_DELTA_SECONDS;
+    #if defined(COMPUTE_VELOCITY)
+      #if (AXES & AXIS_X)
+        VELOCITY.x += ACCEL.x * delta;      
       #endif
 
-      #if defined(COMPUTE_POSITION)
-        POSITION[i] += VELOCITY[i] * OP_DELTA_SECONDS;
+      #if (AXES & AXIS_Y)
+        VELOCITY.y += ACCEL.y * delta;
       #endif
-    }
 
-    #if defined(PLOT_ENABLED)
-      PLOT_ON
-      plot(accel);
-      plot(VELOCITY);
-      plot(POSITION);
-      PLOT_OFF
+      #if (AXES & AXIS_Z)
+        VELOCITY.z += ACCEL.z * delta;      
+      #endif
+    #endif
+
+    #if defined(COMPUTE_POSITION)
+      #if (AXES & AXIS_X)
+        POSITION.x += VELOCITY.x * delta;
+      #endif
+
+      #if (AXES & AXIS_Y)
+        POSITION.y += VELOCITY.y * delta;
+      #endif
+
+      #if (AXES & AXIS_Z)
+        POSITION.z += VELOCITY.z * delta;
+      #endif
+
     #endif
   }
-#endif
+}
 
 void publish() {
   uint32_t current_micros = micros();
@@ -614,7 +542,19 @@ void publish() {
     }
   }
 
-  __spfPublish();
+  START_PLOT;
+
+  plot(ACCEL.x * 100);
+  plot(ACCEL.y * 100);
+  // plot(ACCEL.z * 100);
+
+  plot(VELOCITY.x * 100);
+  plot(VELOCITY.y * 100);
+  // plot(VELOCITY.z * 100);
+
+  plot(POSITION.x * 100);
+  plot(POSITION.y * 100);
+  // plot(POSITION.z * 100);
 
   #if defined(WIFI_MQTT_ENABLED)
     mqtt.connected() 
