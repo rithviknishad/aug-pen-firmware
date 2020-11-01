@@ -463,17 +463,16 @@ void sample() {
       fifoCount -= packetSize;
     }
 
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    mpu.dmpGetAccel(&RAW_ACCEL, fifoBuffer);
+    mpu.dmpGetQuaternion          (&q, fifoBuffer);
+    mpu.dmpGetAccel               (&RAW_ACCEL, fifoBuffer);
 
-    mpu.dmpGetGravity(&gravityVector, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravityVector);
+    mpu.dmpGetGravity             (&gravityVector, &q);
 
-    mpu.dmpGetLinearAccel(&REAL_ACCEL, &RAW_ACCEL, &gravityVector);
-    mpu.dmpGetLinearAccelInWorld(&WORLD_ACCEL, &REAL_ACCEL, &q);
+    mpu.dmpGetLinearAccel         (&REAL_ACCEL, &RAW_ACCEL, &gravityVector);
+    mpu.dmpGetLinearAccelInWorld  (&WORLD_ACCEL, &REAL_ACCEL, &q);
 
     #if defined(COMPUTE_VELOCITY)
-      
+
       #if (AXES & AXIS_X)
         ACCEL.x = WORLD_ACCEL.x * 9.80665 / ACCEL_SENSITIVITY;
       #endif
@@ -491,7 +490,7 @@ void sample() {
 
       float delta = (current_micros - lastSampleTime) / 1e+6;
 
-      if (lastSampleTime == 0) {
+      if (lastSampleTime == 0 || delta < 0) { // overflow protection.
         lastSampleTime = current_micros;
         return;
       }
